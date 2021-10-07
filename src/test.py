@@ -38,11 +38,11 @@ def get_button_image(img, text):
 class TestControl:    
     def __init__(self):
         rospy.init_node('TestControl')
-        self.cam_info = rospy.wait_for_message('/camera/rgb/camera_info', CameraInfo)
+        self.cam_info = rospy.wait_for_message('/camera/unityrgb/camera_info', CameraInfo)
         self.cam_model = PinholeCameraModel()
         self.cam_model.fromCameraInfo(self.cam_info)
         self.objects_sub = rospy.Subscriber('/object_clusters', SegmentedClustersArray, self.get_location)
-        self.image_sub = rospy.Subscriber('/camera/rgb/image_raw', Image, self.image_cb)
+        self.image_sub = rospy.Subscriber('/camera/unityrgb/image_raw', Image, self.image_cb)
         self.robot_cmd_vel = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.button_pub = rospy.Publisher('/buttons', String, queue_size=10)
         self.serv = rospy.ServiceProxy('indicate', Indicate)
@@ -59,7 +59,8 @@ class TestControl:
     def get_location(self, clusters):
         #print(clusters.header)
         #print(len(clusters.clusters))
-        del self.locations[:]
+        #del self.locations[:]
+        loc = []
         for i, pc in enumerate(clusters.clusters):
             num_points = pc.width * pc.height
             #print("Cluster", i ,": # points ", num_points)
@@ -71,13 +72,14 @@ class TestControl:
                 sum_x = sum_x + p[0]
                 sum_y = sum_y + p[1]
                 sum_z = sum_z + p[2]
-                break
 
-            x = sum_x#/num_points
-            y = sum_y#/num_points
-            z = sum_z#/num_points
-            self.locations.append([x,y,z])
+            x = sum_x/num_points
+            y = sum_y/num_points
+            z = sum_z/num_points
+            loc.append([x,y,z])
             #print(self.locations)
+        del self.locations[:]
+        self.locations = loc
 
     def image_cb(self, img):
         #print(img.header)
@@ -93,6 +95,7 @@ class TestControl:
 
 if __name__=='__main__':
     tc = TestControl()
+    time.sleep(2)
     pygame.init()
     pgscreen=pygame.display.set_mode((1080, 720))
     pgscreen.fill((255, 255, 255))
@@ -128,65 +131,89 @@ if __name__=='__main__':
         buttons.add(button)
     buttons.draw(pgscreen)
     pygame.display.update()
-
+    
     while True:
         if tc.has_image():
             pg_img = pygame.image.frombuffer(cv2.cvtColor(tc.cv_image, cv2.COLOR_BGR2RGB).tostring(), tc.cv_image.shape[1::-1], "RGB")
             pgscreen.blit(pg_img, (5,5))
             pygame.display.update()
+        
         for event in pygame.event.get():
-            #print(event)
             if event.type == pygame.MOUSEBUTTONDOWN:
                 pos = pygame.mouse.get_pos()
                 for i, button in enumerate(buttons):
                     if button.rect.left < pos[0] < button.rect.right and button.rect.top < pos[1] < button.rect.bottom:
                         print(button.name, names[button.name])
                         tc.button_pub.publish("play"+str(names[button.name]))
-            elif event.type == pygame.KEYDOWN:
+            elif (event.type == pygame.KEYDOWN):
                 keys = pygame.key.get_pressed()
                 if keys[pygame.K_UP] or keys[pygame.K_DOWN] or keys[pygame.K_RIGHT] or keys[pygame.K_LEFT]:
+                    cmd = Twist()
                     if keys[pygame.K_UP]:
                         print('K_UP arrow key')
+                        cmd.linear.x = 1.0
                     elif keys[pygame.K_DOWN]:
                         print('K_DOWN arrow key')
+                        cmd.linear.x = -1.0
                     elif  keys[pygame.K_RIGHT]:
-                        print('K_RIGHT rrow key')
+                        print('K_RIGHT arrow key')
+                        cmd.angular.z = -1.0
                     elif  keys[pygame.K_LEFT]:
                         print('K_LEFT arrow key')
-                    a = Twist()
-                    a.linear.x = 1.0
-                    tc.robot_cmd_vel.publish(a)
+                        cmd.angular.z = 1.0
+                    print(cmd)
+                    tc.robot_cmd_vel.publish(cmd)
                 if (keys[pygame.K_0] or keys[pygame.K_1] or keys[pygame.K_2] or keys[pygame.K_3] or
                     keys[pygame.K_4] or keys[pygame.K_5] or keys[pygame.K_6] or keys[pygame.K_7] or
                     keys[pygame.K_8] or keys[pygame.K_9]):
+                    key = -1
                     if keys[pygame.K_0]:
                         print('K_0 key')
+                        key = 0
                     elif keys[pygame.K_1]:
                         print('K_1 key')
+                        key = 1
                     elif  keys[pygame.K_2]:
                         print('K_2 key')
+                        key = 2
                     elif  keys[pygame.K_3]:
                         print('K_3 key')
+                        key = 3
                     elif keys[pygame.K_4]:
                         print('K_4 key')
+                        key = 4
                     elif  keys[pygame.K_5]:
                         print('K_5 key')
+                        key = 5
                     elif  keys[pygame.K_6]:
                         print('K_6 key')
+                        key = 6
                     elif keys[pygame.K_7]:
                         print('K_7 key')
+                        key = 7
                     elif  keys[pygame.K_8]:
                         print('K_8 key')
+                        key = 8
                     elif  keys[pygame.K_9]:
                         print('K_9 key')
+                        key = 9
                     p = PointStamped()
-                    p.header.frame_id = 'camera_frame_optical'
-                    p.point.x = tc.locations[0][0]
-                    p.point.y = tc.locations[0][1]
-                    p.point.z = tc.locations[0][2]
-                    try:
-                        tc.serv(p)
-                    except:
-						pass
+                    print(key, len(tc.locations))
+                    if (0<= key < len(tc.locations)):
+                        p.header.frame_id = 'kinect2_link'
+                        p.point.x = tc.locations[key][0]
+                        p.point.y = tc.locations[key][1]-0.15
+                        p.point.z = tc.locations[key][2]
+                        print(p)
+                        try:
+                            resp = tc.serv(p)
+                            print(resp)
+                        except:
+			                pass
+                if (keys[pygame.K_s]):
+                    print('K_s key')
+                    tc.button_pub.publish("home")
+                    
             elif event.type == pygame.QUIT:
                 sys.exit()
+    
